@@ -1,1 +1,1 @@
-##Smart-AI-Traffic-Prioritization-Switch-IEEE-Cognichip-Hackathon
+Smart-AI-Traffic-Prioritization-Switch-IEEE-Cognichip-Hackathon
