@@ -1,0 +1,18 @@
+=== Command: ls rtl/ (2026-04-17T23:11:32.326Z) ===
+Exit Code: 0
+Output:
+
+
+    Directory: 
+    C:\Users\brave\OneDrive\Documents\GitHub\Smart-AI-Traffic-Prioritization-Switch-IEEE-Cognichip-Hackathon\rtl
+
+
+Mode                 LastWriteTime         Length Name                                                                 
+----                 -------------         ------ ----                                                                 
+-a---l         4/17/2026   4:09 PM              2 packet_classifier.sv                                                 
+-a---l         4/17/2026   4:08 PM           2548 sync_fifo.sv                                                         
+
+
+
+=== End Output ===
+

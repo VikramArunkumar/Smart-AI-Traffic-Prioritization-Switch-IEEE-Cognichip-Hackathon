@@ -1,0 +1,6 @@
+=== Command: Get-Content "simulation_results\sim_2026-04-18T03-31-12-916Z\compile.log" -ErrorAction SilentlyContinue | Select-String "Error" | Select-Object -First 20 (2026-04-18T03:33:24.801Z) ===
+Exit Code: 1
+Output:
+
+=== End Output ===
+

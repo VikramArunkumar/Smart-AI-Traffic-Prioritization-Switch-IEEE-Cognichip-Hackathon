@@ -1,0 +1,25 @@
+=== Command: $content = @'
+bench_traffic_switch:
+  deps:
+    - rtl/sync_fifo.sv
+    - rtl/packet_classifier.sv
+    - rtl/wrr_scheduler.sv
+    - rtl/traffic_switch_top.sv
+    - sim/tb_traffic_switch_top.sv
+  top: tb_traffic_switch_top
+'@
+[System.IO.File]::WriteAllText("DEPS.yml", $content)
+Get-Content "DEPS.yml" (2026-04-18T03:23:51.136Z) ===
+Exit Code: 0
+Output:
+bench_traffic_switch:
+  deps:
+    - rtl/sync_fifo.sv
+    - rtl/packet_classifier.sv
+    - rtl/wrr_scheduler.sv
+    - rtl/traffic_switch_top.sv
+    - sim/tb_traffic_switch_top.sv
+  top: tb_traffic_switch_top
+
+=== End Output ===
+

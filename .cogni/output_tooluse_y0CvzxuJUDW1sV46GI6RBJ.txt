@@ -1,0 +1,12 @@
+=== Command: Get-Content "rtl\traffic_switch_top.sv" | Select-String "clog2" | Select-Object -First 3 (2026-04-17T23:16:18.553Z) ===
+Exit Code: 0
+Output:
+
+    output logic [$clog2(FIFO_DEPTH):0] high_occupancy,
+    output logic [$clog2(FIFO_DEPTH):0] med_occupancy,
+    output logic [$clog2(FIFO_DEPTH):0] low_occupancy,
+
+
+
+=== End Output ===
+

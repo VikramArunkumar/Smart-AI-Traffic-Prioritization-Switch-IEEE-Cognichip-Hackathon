@@ -1,0 +1,487 @@
+`timescale 1ns/1ps
+// =============================================================================
+// tb_traffic_switch_top.sv
+// Self-checking testbench for traffic_switch_top
+//   (WRR scheduler + starvation prevention, per-queue FIFO depths)
+//
+// Verification strategy:
+//   - Per-priority software queues (golden model) track injected packets
+//   - Continuous always-block checker fires on every output handshake
+//   - Classifier mirror function must match RTL packet_classifier.sv exactly
+//   - Small FIFO depths and STARVE_THRESH for fast simulation
+//
+// Test cases:
+//   TC1 - Classification correctness (all 8 types + latency_sensitive override)
+//   TC2 - WRR scheduling ratio  (H>=4, M>=2, L>=1 per round)
+//   TC3 - Starvation prevention (starve_l asserts after STARVE cycles)
+//   TC4 - Drop counter verification (FIFO overflow increments counter)
+//   TC5 - Backpressure / no data loss
+//   TC6 - Reset mid-operation (FIFOs, counters, starve flags all cleared)
+// =============================================================================
+module tb_traffic_switch_top;
+
+    // =========================================================================
+    // DUT parameters - small for fast simulation
+    // =========================================================================
+    localparam int FIFO_H      = 8;
+    localparam int FIFO_M      = 4;
+    localparam int FIFO_L      = 4;
+    localparam int STARVE      = 32;
+    localparam int WEIGHT_H    = 4;
+    localparam int WEIGHT_M    = 2;
+    localparam int WEIGHT_L    = 1;
+    localparam int CLK_HALF    = 5;   // 10 ns period
+    localparam int TIMEOUT_CYC = 20000;
+
+    // =========================================================================
+    // DUT signals
+    // =========================================================================
+    logic        clock;
+    logic        reset;
+    logic        in_valid;
+    logic [2:0]  in_type;
+    logic [15:0] in_size;
+    logic        in_latency_sensitive;
+    logic        out_valid;
+    logic [2:0]  out_type;
+    logic [15:0] out_size;
+    logic        out_latency_sensitive;
+    logic [1:0]  out_priority;
+    logic        out_ready;
+    logic [3:0]  high_occupancy;   // $clog2(8)+1 = 4 bits
+    logic [2:0]  med_occupancy;    // $clog2(4)+1 = 3 bits
+    logic [2:0]  low_occupancy;
+    logic [15:0] high_drop_cnt;
+    logic [15:0] med_drop_cnt;
+    logic [15:0] low_drop_cnt;
+    logic        starve_h, starve_m, starve_l;
+
+    // =========================================================================
+    // DUT instantiation
+    // =========================================================================
+    traffic_switch_top #(
+        .FIFO_DEPTH_H  (FIFO_H),
+        .FIFO_DEPTH_M  (FIFO_M),
+        .FIFO_DEPTH_L  (FIFO_L),
+        .DROP_CNT_W    (16),
+        .WEIGHT_H      (WEIGHT_H),
+        .WEIGHT_M      (WEIGHT_M),
+        .WEIGHT_L      (WEIGHT_L),
+        .STARVE_THRESH (STARVE)
+    ) dut (
+        .clock                (clock),
+        .reset                (reset),
+        .in_valid             (in_valid),
+        .in_type              (in_type),
+        .in_size              (in_size),
+        .in_latency_sensitive (in_latency_sensitive),
+        .out_valid            (out_valid),
+        .out_type             (out_type),
+        .out_size             (out_size),
+        .out_latency_sensitive(out_latency_sensitive),
+        .out_priority         (out_priority),
+        .out_ready            (out_ready),
+        .high_occupancy       (high_occupancy),
+        .med_occupancy        (med_occupancy),
+        .low_occupancy        (low_occupancy),
+        .high_drop_cnt        (high_drop_cnt),
+        .med_drop_cnt         (med_drop_cnt),
+        .low_drop_cnt         (low_drop_cnt),
+        .starve_h             (starve_h),
+        .starve_m             (starve_m),
+        .starve_l             (starve_l)
+    );
+
+    // =========================================================================
+    // Clock
+    // =========================================================================
+    initial clock = 1'b0;
+    always  #CLK_HALF clock = ~clock;
+
+    // =========================================================================
+    // Timeout watchdog
+    // =========================================================================
+    initial begin
+        #(TIMEOUT_CYC * CLK_HALF * 2);
+        $display("ERROR");
+        $fatal(1, "TIMEOUT: simulation exceeded %0d cycles", TIMEOUT_CYC);
+    end
+
+    // =========================================================================
+    // Waveform dump
+    // =========================================================================
+    initial begin
+        $dumpfile("dumpfile.fst");
+        $dumpvars(0);
+    end
+
+    // =========================================================================
+    // Golden model: packet type and per-priority queues
+    // =========================================================================
+    typedef struct {
+        logic [2:0]  pkt_type;
+        logic [15:0] pkt_size;
+        logic        latency_sensitive;
+    } pkt_t;
+
+    pkt_t high_q[$];
+    pkt_t med_q[$];
+    pkt_t low_q[$];
+    int   error_count;
+    pkt_t chk_got, chk_exp;  // checker temporaries (module-scope for Verilator)
+
+    // Classifier mirror - must match RTL packet_classifier.sv
+    function automatic logic [1:0] classify_pkt(
+        input logic [2:0] t,
+        input logic       ls
+    );
+        if (ls || t[2:1] == 2'b00) return 2'b10;   // HIGH
+        else if (t[2:1] == 2'b01)  return 2'b01;   // MED
+        else                        return 2'b00;   // LOW
+    endfunction
+
+    // =========================================================================
+    // Continuous output checker - fires on every output handshake
+    // Samples in the active region (before NBA) to see pre-dequeue state.
+    // =========================================================================
+    always @(posedge clock) begin : out_check_blk
+        if (!reset && out_valid && out_ready) begin
+            chk_got.pkt_type          = out_type;
+            chk_got.pkt_size          = out_size;
+            chk_got.latency_sensitive = out_latency_sensitive;
+
+            case (out_priority)
+                2'b10: begin  // HIGH
+                    if (high_q.size() == 0) begin
+                        $display("LOG: %0t : ERROR : tb_checker : dut.out_priority : expected_value: no_packet actual_value: HIGH_unexpected", $time);
+                        error_count++;
+                    end else begin
+                        chk_exp = high_q.pop_front();
+                        if (chk_got.pkt_type !== chk_exp.pkt_type || chk_got.pkt_size !== chk_exp.pkt_size ||
+                            chk_got.latency_sensitive !== chk_exp.latency_sensitive) begin
+                            $display("LOG: %0t : ERROR : tb_checker : dut.out_pkt_HIGH : expected_value: type=%0h size=%0h ls=%0b actual_value: type=%0h size=%0h ls=%0b",
+                                $time, chk_exp.pkt_type, chk_exp.pkt_size, chk_exp.latency_sensitive,
+                                chk_got.pkt_type, chk_got.pkt_size, chk_got.latency_sensitive);
+                            error_count++;
+                        end else begin
+                            $display("LOG: %0t : INFO : tb_checker : dut.out_pkt_HIGH : expected_value: type=%0h size=%0h actual_value: match",
+                                $time, chk_exp.pkt_type, chk_exp.pkt_size);
+                        end
+                    end
+                end
+                2'b01: begin  // MED
+                    if (med_q.size() == 0) begin
+                        $display("LOG: %0t : ERROR : tb_checker : dut.out_priority : expected_value: no_packet actual_value: MED_unexpected", $time);
+                        error_count++;
+                    end else begin
+                        chk_exp = med_q.pop_front();
+                        if (chk_got.pkt_type !== chk_exp.pkt_type || chk_got.pkt_size !== chk_exp.pkt_size ||
+                            chk_got.latency_sensitive !== chk_exp.latency_sensitive) begin
+                            $display("LOG: %0t : ERROR : tb_checker : dut.out_pkt_MED : expected_value: type=%0h size=%0h ls=%0b actual_value: type=%0h size=%0h ls=%0b",
+                                $time, chk_exp.pkt_type, chk_exp.pkt_size, chk_exp.latency_sensitive,
+                                chk_got.pkt_type, chk_got.pkt_size, chk_got.latency_sensitive);
+                            error_count++;
+                        end else begin
+                            $display("LOG: %0t : INFO : tb_checker : dut.out_pkt_MED : expected_value: type=%0h size=%0h actual_value: match",
+                                $time, chk_exp.pkt_type, chk_exp.pkt_size);
+                        end
+                    end
+                end
+                default: begin  // LOW (2'b00)
+                    if (low_q.size() == 0) begin
+                        $display("LOG: %0t : ERROR : tb_checker : dut.out_priority : expected_value: no_packet actual_value: LOW_unexpected", $time);
+                        error_count++;
+                    end else begin
+                        chk_exp = low_q.pop_front();
+                        if (chk_got.pkt_type !== chk_exp.pkt_type || chk_got.pkt_size !== chk_exp.pkt_size ||
+                            chk_got.latency_sensitive !== chk_exp.latency_sensitive) begin
+                            $display("LOG: %0t : ERROR : tb_checker : dut.out_pkt_LOW : expected_value: type=%0h size=%0h ls=%0b actual_value: type=%0h size=%0h ls=%0b",
+                                $time, chk_exp.pkt_type, chk_exp.pkt_size, chk_exp.latency_sensitive,
+                                chk_got.pkt_type, chk_got.pkt_size, chk_got.latency_sensitive);
+                            error_count++;
+                        end else begin
+                            $display("LOG: %0t : INFO : tb_checker : dut.out_pkt_LOW : expected_value: type=%0h size=%0h actual_value: match",
+                                $time, chk_exp.pkt_type, chk_exp.pkt_size);
+                        end
+                    end
+                end
+            endcase
+        end
+    end
+
+    // =========================================================================
+    // Tasks
+    // =========================================================================
+
+    // Apply synchronous reset, clear all stimulus signals
+    task automatic do_reset();
+        reset = 1'b1;
+        in_valid = 1'b0; out_ready = 1'b0;
+        in_type = '0; in_size = '0; in_latency_sensitive = 1'b0;
+        repeat (4) @(posedge clock);
+        #1; reset = 1'b0;
+        @(posedge clock); #1;
+    endtask
+
+    // Inject one packet (1-cycle pulse on in_valid).
+    // push_to_q=1: add to golden SW queue (packet will reach output).
+    // push_to_q=0: don't push (packet will be dropped by full FIFO).
+    task automatic inject_packet(
+        input logic [2:0]  t,
+        input logic [15:0] sz,
+        input logic        ls,
+        input logic        push_to_q
+    );
+        pkt_t       p;
+        logic [1:0] prio;
+        p.pkt_type = t; p.pkt_size = sz; p.latency_sensitive = ls;
+        prio = classify_pkt(t, ls);
+        if (push_to_q) begin
+            case (prio)
+                2'b10: high_q.push_back(p);
+                2'b01: med_q.push_back(p);
+                2'b00: low_q.push_back(p);
+            endcase
+        end
+        @(posedge clock); #1;
+        in_valid = 1'b1; in_type = t; in_size = sz; in_latency_sensitive = ls;
+        @(posedge clock); #1;
+        in_valid = 1'b0;
+    endtask
+
+    // Accept packets until all SW golden queues are empty (or cycle timeout).
+    task automatic drain_all();
+        int cnt = 0;
+        out_ready = 1'b1;
+        @(posedge clock);
+        while ((high_q.size() + med_q.size() + low_q.size() > 0) && cnt < 600) begin
+            @(posedge clock);
+            cnt++;
+        end
+        repeat (4) @(posedge clock);
+        #1; out_ready = 1'b0;
+        @(posedge clock); #1;
+    endtask
+
+    // =========================================================================
+    // WRR ratio counters (used in TC2)
+    // =========================================================================
+    int high_cnt, med_cnt, low_cnt;
+
+    // =========================================================================
+    // Main test sequence
+    // =========================================================================
+    initial begin
+        $display("TEST START");
+        error_count = 0;
+        do_reset();
+
+        // =================================================================
+        // TC1: Packet classification correctness
+        //   - Types 0,1      -> HIGH
+        //   - Types 2,3      -> MED
+        //   - Types 4-7      -> LOW
+        //   - latency_sensitive=1 overrides any type to HIGH
+        // =================================================================
+        $display("--- TC1: Packet classification correctness ---");
+        out_ready = 1'b1;
+
+        inject_packet(3'b000, 16'h0100, 1'b0, 1'b1); // Video   -> HIGH
+        inject_packet(3'b001, 16'h0200, 1'b0, 1'b1); // Gaming  -> HIGH
+        inject_packet(3'b010, 16'h0300, 1'b0, 1'b1); // VoIP    -> MED
+        inject_packet(3'b011, 16'h0400, 1'b0, 1'b1); // Stream  -> MED
+        inject_packet(3'b100, 16'h0500, 1'b0, 1'b1); // File    -> LOW
+        inject_packet(3'b101, 16'h0600, 1'b0, 1'b1); // Bulk    -> LOW
+        inject_packet(3'b110, 16'h0700, 1'b0, 1'b1); // BG      -> LOW
+        inject_packet(3'b111, 16'h0800, 1'b0, 1'b1); // BestEff -> LOW
+        inject_packet(3'b100, 16'h0900, 1'b1, 1'b1); // File+LS -> HIGH (override)
+        inject_packet(3'b111, 16'h0A00, 1'b1, 1'b1); // BE+LS   -> HIGH (override)
+
+        drain_all();
+
+        if (error_count == 0)
+            $display("TC1 PASSED: all 10 packets classified correctly");
+        else
+            $display("TC1 FAILED: %0d error(s)", error_count);
+
+        // =================================================================
+        // TC2: WRR scheduling ratio
+        //   Flood all queues then count outputs by priority.
+        //   Expect H>=4, M>=2, L>=1 per 16-packet window (4:2:1 ratio).
+        // =================================================================
+        $display("--- TC2: WRR scheduling ratio (4:2:1) ---");
+        out_ready = 1'b0;
+
+        repeat (8) inject_packet(3'b000, 16'hAAAA, 1'b0, 1'b1); // 8 HIGH
+        repeat (4) inject_packet(3'b010, 16'hBBBB, 1'b0, 1'b1); // 4 MED
+        repeat (4) inject_packet(3'b100, 16'hCCCC, 1'b0, 1'b1); // 4 LOW
+
+        high_cnt = 0; med_cnt = 0; low_cnt = 0;
+        out_ready = 1'b1;
+        begin : tc2_count
+            static int total = 0;
+            while (total < 16) begin
+                @(posedge clock); // active region - pre-NBA values
+                if (out_valid && out_ready) begin
+                    case (out_priority)
+                        2'b10: high_cnt++;
+                        2'b01: med_cnt++;
+                        2'b00: low_cnt++;
+                    endcase
+                    total++;
+                end
+            end
+        end
+        #1; out_ready = 1'b0;
+
+        $display("LOG: %0t : INFO : tb_wrr : dut.out_priority_counts : expected_value: H>=4 M>=2 L>=1 actual_value: H=%0d M=%0d L=%0d",
+                 $time, high_cnt, med_cnt, low_cnt);
+
+        if (high_cnt >= 4 && med_cnt >= 2 && low_cnt >= 1) begin
+            $display("TC2 PASSED: WRR ratio satisfied H=%0d M=%0d L=%0d", high_cnt, med_cnt, low_cnt);
+        end else begin
+            $display("LOG: %0t : ERROR : tb_wrr : dut.out_priority_counts : expected_value: H>=4 M>=2 L>=1 actual_value: H=%0d M=%0d L=%0d",
+                     $time, high_cnt, med_cnt, low_cnt);
+            error_count++;
+            $display("TC2 FAILED");
+        end
+        drain_all();
+
+        // =================================================================
+        // TC3: Starvation prevention
+        //   Inject one LOW packet, hold out_ready=0 for STARVE+5 cycles.
+        //   Verify starve_l asserts. Release backpressure and confirm the
+        //   LOW packet is correctly served (checker validates content).
+        // =================================================================
+        $display("--- TC3: Starvation prevention ---");
+        // Flush any residual packets
+        high_q.delete(); med_q.delete(); low_q.delete();
+        out_ready = 1'b1; repeat (10) @(posedge clock); #1; out_ready = 1'b0;
+
+        inject_packet(3'b100, 16'hDEAD, 1'b0, 1'b1); // LOW packet
+
+        repeat (STARVE + 5) @(posedge clock);
+        #1;
+
+        if (starve_l !== 1'b1) begin
+            $display("LOG: %0t : ERROR : tb_starve : dut.starve_l : expected_value: 1'b1 actual_value: 1'b0", $time);
+            error_count++;
+            $display("TC3 FAILED: starve_l did not assert after %0d cycles", STARVE + 5);
+        end else begin
+            $display("LOG: %0t : INFO : tb_starve : dut.starve_l : expected_value: 1'b1 actual_value: 1'b1", $time);
+            $display("TC3 PASSED: starve_l correctly asserted after %0d cycles", STARVE + 5);
+        end
+        drain_all(); // checker verifies the LOW packet content
+
+        // =================================================================
+        // TC4: Drop counter verification
+        //   Fill LOW FIFO to capacity, inject 3 more (dropped).
+        //   Verify low_drop_cnt >= 3 and high/med_drop_cnt stay at 0.
+        // =================================================================
+        $display("--- TC4: Drop counter verification ---");
+        out_ready = 1'b0;
+
+        repeat (FIFO_L) inject_packet(3'b100, 16'hFF00, 1'b0, 1'b1); // fill FIFO
+        // Overflow by 3 - these will be dropped, so don't push to golden queue
+        repeat (3) inject_packet(3'b100, 16'hFF01, 1'b0, 1'b0);
+
+        @(posedge clock); #1;
+        $display("LOG: %0t : INFO : tb_drop : dut.low_drop_cnt : expected_value: >=3 actual_value: %0d",
+                 $time, low_drop_cnt);
+
+        if (low_drop_cnt >= 3) begin
+            $display("TC4 PASSED: low_drop_cnt=%0d (expected >= 3)", low_drop_cnt);
+        end else begin
+            $display("LOG: %0t : ERROR : tb_drop : dut.low_drop_cnt : expected_value: >=3 actual_value: %0d",
+                     $time, low_drop_cnt);
+            error_count++;
+            $display("TC4 FAILED");
+        end
+
+        if (high_drop_cnt !== 16'd0 || med_drop_cnt !== 16'd0) begin
+            $display("LOG: %0t : ERROR : tb_drop : dut.high_drop_cnt/med_drop_cnt : expected_value: 0 actual_value: H=%0d M=%0d",
+                     $time, high_drop_cnt, med_drop_cnt);
+            error_count++;
+        end
+        drain_all();
+
+        // =================================================================
+        // TC5: Backpressure - no data lost
+        //   Inject 3 packets (1 of each priority) with out_ready=0.
+        //   Wait 8 cycles. Release - all 3 must arrive at output intact.
+        // =================================================================
+        $display("--- TC5: Backpressure / no data loss ---");
+        out_ready = 1'b0;
+
+        inject_packet(3'b000, 16'h1111, 1'b0, 1'b1); // HIGH
+        inject_packet(3'b010, 16'h2222, 1'b0, 1'b1); // MED
+        inject_packet(3'b100, 16'h3333, 1'b0, 1'b1); // LOW
+
+        repeat (8) @(posedge clock); #1; // backpressure hold
+        drain_all();
+
+        if (error_count == 0)
+            $display("TC5 PASSED: all 3 packets preserved under backpressure");
+        else
+            $display("TC5 note: check prior error log");
+
+        // =================================================================
+        // TC6: Reset mid-operation
+        //   Inject packets without draining, then assert reset.
+        //   Verify out_valid=0, all drop counters=0, starve flags=0.
+        // =================================================================
+        $display("--- TC6: Reset mid-operation ---");
+        out_ready = 1'b0;
+
+        // Inject without pushing to SW queues (they'll be wiped by reset)
+        inject_packet(3'b000, 16'hAAAA, 1'b0, 1'b0);
+        inject_packet(3'b010, 16'hBBBB, 1'b0, 1'b0);
+
+        // Clear SW queues to match reset (no expected output after reset)
+        high_q.delete(); med_q.delete(); low_q.delete();
+
+        reset = 1'b1;
+        repeat (4) @(posedge clock);
+        #1; reset = 1'b0;
+        @(posedge clock); #1;
+
+        if (out_valid !== 1'b0) begin
+            $display("LOG: %0t : ERROR : tb_reset : dut.out_valid : expected_value: 1'b0 actual_value: 1'b1", $time);
+            error_count++;
+            $display("TC6 FAILED: out_valid not cleared after reset");
+        end else begin
+            $display("LOG: %0t : INFO : tb_reset : dut.out_valid : expected_value: 1'b0 actual_value: 1'b0", $time);
+        end
+
+        if (high_drop_cnt !== 16'd0 || med_drop_cnt !== 16'd0 || low_drop_cnt !== 16'd0) begin
+            $display("LOG: %0t : ERROR : tb_reset : dut.drop_cnts : expected_value: 0 actual_value: H=%0d M=%0d L=%0d",
+                     $time, high_drop_cnt, med_drop_cnt, low_drop_cnt);
+            error_count++;
+        end
+
+        if (starve_h !== 1'b0 || starve_m !== 1'b0 || starve_l !== 1'b0) begin
+            $display("LOG: %0t : ERROR : tb_reset : dut.starve_flags : expected_value: 3'b000 actual_value: H=%0b M=%0b L=%0b",
+                     $time, starve_h, starve_m, starve_l);
+            error_count++;
+        end
+
+        if (error_count == 0)
+            $display("TC6 PASSED: DUT cleanly reset");
+        else
+            $display("TC6 FAILED");
+
+        // =================================================================
+        // Final verdict
+        // =================================================================
+        repeat (5) @(posedge clock);
+
+        if (error_count == 0) begin
+            $display("TEST PASSED");
+        end else begin
+            $display("ERROR");
+            $error("TEST FAILED: %0d error(s) detected", error_count);
+        end
+        $finish;
+    end
+
+endmodule

@@ -1,0 +1,240 @@
+=== Command: $content = @"
+// =============================================================================
+// traffic_switch_top.sv
+// Smart AI Traffic Prioritization Switch - Top-Level Integration
+//
+// Scheduler: Weighted Round Robin (WRR) with starvation prevention
+//
+// Each priority queue has an independently configurable FIFO depth:
+//   FIFO_DEPTH_H (HIGH)   - default 32: more buffer for latency-sensitive bursts
+//   FIFO_DEPTH_M (MEDIUM) - default 16: moderate buffering
+//   FIFO_DEPTH_L (LOW)    - default  8: smaller buffer; LOW traffic can drop
+// All depths must be powers of 2 (required by sync_fifo).
+//
+// Occupancy counter widths are automatically derived per-queue via `$clog2.
+//
+// Packet metadata format (packed into FIFO word [19:0]):
+//   [19:17] pkt_type          (3 bits)
+//   [16:1]  pkt_size          (16 bits)
+//   [0]     latency_sensitive (1 bit)
+//
+// Priority encoding (out_priority[1:0]):
+//   2'b10 = HIGH  |  2'b01 = MEDIUM  |  2'b00 = LOW
+// =============================================================================
+module traffic_switch_top #(
+    // -------------------------------------------------------------------------
+    // Per-queue FIFO depths (must be powers of 2)
+    // -------------------------------------------------------------------------
+    parameter int FIFO_DEPTH_H  = 32,   // HIGH   queue depth
+    parameter int FIFO_DEPTH_M  = 16,   // MEDIUM queue depth
+    parameter int FIFO_DEPTH_L  = 8,    // LOW    queue depth
+    // -------------------------------------------------------------------------
+    // Drop counter width
+    // -------------------------------------------------------------------------
+    parameter int DROP_CNT_W    = 16,
+    // -------------------------------------------------------------------------
+    // WRR weights and starvation threshold (passed through to wrr_scheduler)
+    // -------------------------------------------------------------------------
+    parameter int WEIGHT_H      = 4,
+    parameter int WEIGHT_M      = 2,
+    parameter int WEIGHT_L      = 1,
+    parameter int STARVE_THRESH = 256
+) (
+    input  logic        clock,
+    input  logic        reset,
+
+    // -------------------------------------------------------------------------
+    // Input packet metadata
+    // -------------------------------------------------------------------------
+    input  logic        in_valid,
+    input  logic [2:0]  in_type,
+    input  logic [15:0] in_size,
+    input  logic        in_latency_sensitive,
+
+    // -------------------------------------------------------------------------
+    // Output to downstream consumer (valid/ready handshake)
+    // -------------------------------------------------------------------------
+    output logic        out_valid,
+    output logic [2:0]  out_type,
+    output logic [15:0] out_size,
+    output logic        out_latency_sensitive,
+    output logic [1:0]  out_priority,
+    input  logic        out_ready,
+
+    // -------------------------------------------------------------------------
+    // Observability: per-queue occupancy counters
+    // Width is derived from each queue's depth independently
+    // -------------------------------------------------------------------------
+    output logic [`$clog2(FIFO_DEPTH_H):0] high_occupancy,
+    output logic [`$clog2(FIFO_DEPTH_M):0] med_occupancy,
+    output logic [`$clog2(FIFO_DEPTH_L):0] low_occupancy,
+
+    // -------------------------------------------------------------------------
+    // Observability: packet drop counters (tail-drop when queue is full)
+    // -------------------------------------------------------------------------
+    output logic [DROP_CNT_W-1:0] high_drop_cnt,
+    output logic [DROP_CNT_W-1:0] med_drop_cnt,
+    output logic [DROP_CNT_W-1:0] low_drop_cnt,
+
+    // -------------------------------------------------------------------------
+    // Observability: starvation flags from WRR scheduler
+    // -------------------------------------------------------------------------
+    output logic        starve_h,
+    output logic        starve_m,
+    output logic        starve_l
+);
+
+    // -------------------------------------------------------------------------
+    // Local parameters
+    // -------------------------------------------------------------------------
+    localparam int PKT_W = 20;  // pkt_type(3) + pkt_size(16) + latency_sensitive(1)
+
+    // -------------------------------------------------------------------------
+    // Internal signals
+    // -------------------------------------------------------------------------
+    logic high_prio, med_prio, low_prio;
+    logic [PKT_W-1:0] pkt_data_in;
+
+    logic high_wr_en,  med_wr_en,  low_wr_en;
+    logic high_full,   med_full,   low_full;
+    logic high_rd_en,  med_rd_en,  low_rd_en;
+    logic high_empty,  med_empty,  low_empty;
+
+    logic [PKT_W-1:0] high_rd_data, med_rd_data, low_rd_data;
+    logic [PKT_W-1:0] sched_out_data;
+
+    // -------------------------------------------------------------------------
+    // Pack / unpack packet metadata word
+    // -------------------------------------------------------------------------
+    assign pkt_data_in = {in_type, in_size, in_latency_sensitive};
+    assign {out_type, out_size, out_latency_sensitive} = sched_out_data;
+
+    // -------------------------------------------------------------------------
+    // Packet Classifier (combinational)
+    // -------------------------------------------------------------------------
+    packet_classifier u_classifier (
+        .valid             (in_valid),
+        .pkt_type          (in_type),
+        .pkt_size          (in_size),
+        .latency_sensitive (in_latency_sensitive),
+        .high_prio         (high_prio),
+        .med_prio          (med_prio),
+        .low_prio          (low_prio)
+    );
+
+    // -------------------------------------------------------------------------
+    // Write enables: tail-drop when queue is full
+    // -------------------------------------------------------------------------
+    assign high_wr_en = high_prio && !high_full;
+    assign med_wr_en  = med_prio  && !med_full;
+    assign low_wr_en  = low_prio  && !low_full;
+
+    // -------------------------------------------------------------------------
+    // Drop counters
+    // -------------------------------------------------------------------------
+    always_ff @(posedge clock) begin
+        if (reset) begin
+            high_drop_cnt <= '0;
+            med_drop_cnt  <= '0;
+            low_drop_cnt  <= '0;
+        end else begin
+            if (high_prio && high_full) high_drop_cnt <= high_drop_cnt + 1'b1;
+            if (med_prio  && med_full)  med_drop_cnt  <= med_drop_cnt  + 1'b1;
+            if (low_prio  && low_full)  low_drop_cnt  <= low_drop_cnt  + 1'b1;
+        end
+    end
+
+    // -------------------------------------------------------------------------
+    // HIGH priority FIFO  (depth = FIFO_DEPTH_H)
+    // -------------------------------------------------------------------------
+    sync_fifo #(
+        .DATA_WIDTH (PKT_W),
+        .DEPTH      (FIFO_DEPTH_H)
+    ) u_high_fifo (
+        .clock     (clock),
+        .reset     (reset),
+        .wr_en     (high_wr_en),
+        .wr_data   (pkt_data_in),
+        .rd_en     (high_rd_en),
+        .rd_data   (high_rd_data),
+        .full      (high_full),
+        .empty     (high_empty),
+        .occupancy (high_occupancy)
+    );
+
+    // -------------------------------------------------------------------------
+    // MEDIUM priority FIFO  (depth = FIFO_DEPTH_M)
+    // -------------------------------------------------------------------------
+    sync_fifo #(
+        .DATA_WIDTH (PKT_W),
+        .DEPTH      (FIFO_DEPTH_M)
+    ) u_med_fifo (
+        .clock     (clock),
+        .reset     (reset),
+        .wr_en     (med_wr_en),
+        .wr_data   (pkt_data_in),
+        .rd_en     (med_rd_en),
+        .rd_data   (med_rd_data),
+        .full      (med_full),
+        .empty     (med_empty),
+        .occupancy (med_occupancy)
+    );
+
+    // -------------------------------------------------------------------------
+    // LOW priority FIFO  (depth = FIFO_DEPTH_L)
+    // -------------------------------------------------------------------------
+    sync_fifo #(
+        .DATA_WIDTH (PKT_W),
+        .DEPTH      (FIFO_DEPTH_L)
+    ) u_low_fifo (
+        .clock     (clock),
+        .reset     (reset),
+        .wr_en     (low_wr_en),
+        .wr_data   (pkt_data_in),
+        .rd_en     (low_rd_en),
+        .rd_data   (low_rd_data),
+        .full      (low_full),
+        .empty     (low_empty),
+        .occupancy (low_occupancy)
+    );
+
+    // -------------------------------------------------------------------------
+    // WRR Scheduler with Starvation Prevention
+    // -------------------------------------------------------------------------
+    wrr_scheduler #(
+        .DATA_WIDTH    (PKT_W),
+        .WEIGHT_H      (WEIGHT_H),
+        .WEIGHT_M      (WEIGHT_M),
+        .WEIGHT_L      (WEIGHT_L),
+        .STARVE_THRESH (STARVE_THRESH)
+    ) u_scheduler (
+        .clock        (clock),
+        .reset        (reset),
+        .high_empty   (high_empty),
+        .high_rd_data (high_rd_data),
+        .high_rd_en   (high_rd_en),
+        .med_empty    (med_empty),
+        .med_rd_data  (med_rd_data),
+        .med_rd_en    (med_rd_en),
+        .low_empty    (low_empty),
+        .low_rd_data  (low_rd_data),
+        .low_rd_en    (low_rd_en),
+        .out_valid    (out_valid),
+        .out_data     (sched_out_data),
+        .out_priority (out_priority),
+        .out_ready    (out_ready),
+        .starve_h     (starve_h),
+        .starve_m     (starve_m),
+        .starve_l     (starve_l)
+    );
+
+endmodule
+"@
+[System.IO.File]::WriteAllText("rtl\traffic_switch_top.sv", $content)
+Write-Host "Written" (2026-04-17T23:39:28.001Z) ===
+Exit Code: 0
+Output:
+Written
+
+=== End Output ===
+

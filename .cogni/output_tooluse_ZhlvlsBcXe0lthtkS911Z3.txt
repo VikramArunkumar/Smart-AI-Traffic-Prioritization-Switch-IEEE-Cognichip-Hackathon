@@ -1,0 +1,15 @@
+=== Command: Get-Content "simulation_results\sim_2026-04-18T03-23-56-298Z\compilation_log.txt" | Select-Object -First 60 (2026-04-18T03:24:20.857Z) ===
+Exit Code: 1
+Output:
+Get-Content : Cannot find path 'C:\Users\brave\OneDrive\Documents\GitHub\Smart-AI-Traffic-Prioritization-Switch-IEEE-Co
+gnichip-Hackathon\simulation_results\sim_2026-04-18T03-23-56-298Z\compilation_log.txt' because it does not exist.
+At line:1 char:1
++ Get-Content "simulation_results\sim_2026-04-18T03-23-56-298Z\compilat ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (C:\Users\brave\...ilation_log.txt:String) [Get-Content], ItemNotFoundEx 
+   ception
+    + FullyQualifiedErrorId : PathNotFound,Microsoft.PowerShell.Commands.GetContentCommand
+ 
+
+=== End Output ===
+

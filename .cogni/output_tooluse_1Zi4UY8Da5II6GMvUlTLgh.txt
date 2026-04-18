@@ -1,0 +1,11 @@
+=== Command: Get-Content "rtl\priority_scheduler.sv" | Select-Object -First 5 (2026-04-17T23:14:21.925Z) ===
+Exit Code: 0
+Output:
+// priority_scheduler.sv
+module priority_scheduler #(
+    parameter int DATA_WIDTH = 20
+) (
+    input  logic                    high_empty,
+
+=== End Output ===
+

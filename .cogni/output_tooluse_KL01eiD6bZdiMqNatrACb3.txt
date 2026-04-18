@@ -1,0 +1,8 @@
+=== Command: (Get-Item "rtl\packet_classifier.sv").Length; Get-Content "rtl\packet_classifier.sv" | Select-Object -First 3 (2026-04-18T03:34:15.554Z) ===
+Exit Code: 0
+Output:
+2
+//
+
+=== End Output ===
+

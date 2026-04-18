@@ -1,0 +1,16 @@
+=== Command: Get-ChildItem rtl\*.sv | Select-Object Name, Length (2026-04-18T03:36:03.315Z) ===
+Exit Code: 0
+Output:
+
+Name                  Length
+----                  ------
+packet_classifier.sv    1482
+priority_scheduler.sv   2019
+sync_fifo.sv            2548
+traffic_switch_top.sv   9668
+wrr_scheduler.sv        8073
+
+
+
+=== End Output ===
+

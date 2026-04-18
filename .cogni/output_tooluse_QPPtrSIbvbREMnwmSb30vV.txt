@@ -1,0 +1,7 @@
+=== Command: New-Item -ItemType Directory -Force -Path "sim" | Out-Null; Write-Host "sim/ ready" (2026-04-18T03:01:50.011Z) ===
+Exit Code: 0
+Output:
+sim/ ready
+
+=== End Output ===
+
