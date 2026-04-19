@@ -1,0 +1,12 @@
+=== Command: Add-Type -AssemblyName System.Drawing; [System.Drawing.Graphics] | Select-Object Name (2026-04-19T03:57:53.984Z) ===
+Exit Code: 0
+Output:
+
+Name    
+----    
+Graphics
+
+
+
+=== End Output ===
+

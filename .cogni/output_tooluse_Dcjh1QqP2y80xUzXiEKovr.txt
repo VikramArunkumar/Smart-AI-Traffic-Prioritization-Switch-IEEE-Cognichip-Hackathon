@@ -1,0 +1,13 @@
+=== Command: Get-ChildItem docs\ | Format-Table Name, @{L='Size (KB)';E={[math]::Round($_.Length/1KB,1)}}, LastWriteTime (2026-04-19T04:07:13.562Z) ===
+Exit Code: 0
+Output:
+
+Name              Size (KB) LastWriteTime       
+----              --------- -------------       
+block_diagram.png      62.8 4/18/2026 8:59:22 PM
+design_spec.md         12.9 4/18/2026 9:07:01 PM
+
+
+
+=== End Output ===
+

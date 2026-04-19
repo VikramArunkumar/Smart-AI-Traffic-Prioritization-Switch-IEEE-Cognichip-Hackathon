@@ -1,0 +1,12 @@
+=== Command: Get-ChildItem docs\ | Format-Table Name, Length, LastWriteTime (2026-04-19T04:04:02.440Z) ===
+Exit Code: 0
+Output:
+
+Name              Length LastWriteTime       
+----              ------ -------------       
+block_diagram.png  64274 4/18/2026 8:59:22 PM
+
+
+
+=== End Output ===
+

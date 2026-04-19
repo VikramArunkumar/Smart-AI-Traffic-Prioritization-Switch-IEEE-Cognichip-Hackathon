@@ -1,0 +1,206 @@
+=== Command: New-Item -ItemType Directory -Force -Path "docs" | Out-Null
+
+Add-Type -AssemblyName System.Drawing
+
+$W = 1100; $H = 720
+$bmp = New-Object System.Drawing.Bitmap($W, $H)
+$g = [System.Drawing.Graphics]::FromImage($bmp)
+$g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+$g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAlias
+
+# Background
+$g.Clear([System.Drawing.Color]::FromArgb(245,245,250))
+
+# Helper functions
+function Rect($x,$y,$w,$h,$fill,$stroke,$sw=2){
+    $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb($stroke[0],$stroke[1],$stroke[2]),$sw)
+    $br  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb($fill[0],$fill[1],$fill[2]))
+    $g.FillRectangle($br,$x,$y,$w,$h)
+    $g.DrawRectangle($pen,$x,$y,$w,$h)
+    $pen.Dispose(); $br.Dispose()
+}
+function RoundRect($x,$y,$w,$h,$r,$fill,$stroke,$sw=2){
+    $path = New-Object System.Drawing.Drawing2D.GraphicsPath
+    $path.AddArc($x,$y,$r,$r,180,90)
+    $path.AddArc($x+$w-$r,$y,$r,$r,270,90)
+    $path.AddArc($x+$w-$r,$y+$h-$r,$r,$r,0,90)
+    $path.AddArc($x,$y+$h-$r,$r,$r,90,90)
+    $path.CloseFigure()
+    $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb($stroke[0],$stroke[1],$stroke[2]),$sw)
+    $br  = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb($fill[0],$fill[1],$fill[2]))
+    $g.FillPath($br,$path)
+    $g.DrawPath($pen,$path)
+    $pen.Dispose(); $br.Dispose(); $path.Dispose()
+}
+function Txt($s,$x,$y,$sz,$col,$bold=$false){
+    $style = if($bold){[System.Drawing.FontStyle]::Bold}else{[System.Drawing.FontStyle]::Regular}
+    $f = New-Object System.Drawing.Font("Segoe UI",$sz,$style)
+    $br = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb($col[0],$col[1],$col[2]))
+    $g.DrawString($s,$f,$br,$x,$y)
+    $f.Dispose(); $br.Dispose()
+}
+function TxtCenter($s,$x,$y,$w,$sz,$col,$bold=$false){
+    $style = if($bold){[System.Drawing.FontStyle]::Bold}else{[System.Drawing.FontStyle]::Regular}
+    $f = New-Object System.Drawing.Font("Segoe UI",$sz,$style)
+    $br = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb($col[0],$col[1],$col[2]))
+    $fmt = New-Object System.Drawing.StringFormat
+    $fmt.Alignment = [System.Drawing.StringAlignment]::Center
+    $rect = New-Object System.Drawing.RectangleF($x,$y,$w,40)
+    $g.DrawString($s,$f,$br,$rect,$fmt)
+    $f.Dispose(); $br.Dispose(); $fmt.Dispose()
+}
+function Arrow($x1,$y1,$x2,$y2,$col,$sw=2){
+    $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb($col[0],$col[1],$col[2]),$sw)
+    $pen.EndCap = [System.Drawing.Drawing2D.LineCap]::ArrowAnchor
+    $g.DrawLine($pen,$x1,$y1,$x2,$y2)
+    $pen.Dispose()
+}
+
+# Colors
+$bg_blue   = @(219,234,254)
+$bg_purple = @(237,233,254)
+$bg_green  = @(220,252,231)
+$bg_orange = @(255,237,213)
+$bg_red    = @(254,226,226)
+$bg_gray   = @(226,232,240)
+$blk       = @(30,30,30)
+$dk_blue   = @(37,99,235)
+$dk_purple = @(109,40,217)
+$dk_green  = @(22,163,74)
+$dk_orange = @(234,88,12)
+$dk_red    = @(220,38,38)
+$dk_gray   = @(71,85,105)
+
+# Title
+Txt "Smart AI Traffic Prioritization Switch — Block Diagram" 30 18 13 $blk $true
+Txt "CogniVik / IEEE-Cognichip Hackathon 2026" 30 40 9 $dk_gray
+
+# -- UPSTREAM box
+RoundRect 20 90 120 80 10 $bg_gray $dk_gray 2
+TxtCenter "Upstream" 20 100 120 9 $blk $true
+TxtCenter "in_valid" 20 115 120 8 $dk_gray
+TxtCenter "in_type[2:0]" 20 127 120 8 $dk_gray
+TxtCenter "in_size[15:0]" 20 139 120 8 $dk_gray
+TxtCenter "in_latency_s" 20 151 120 8 $dk_gray
+
+# Arrow upstream -> classifier
+Arrow 140 130 195 130 $dk_blue 2
+
+# -- CLASSIFIER box
+RoundRect 195 95 130 70 10 $bg_blue $dk_blue 2
+TxtCenter "packet_classifier" 195 104 130 9 $blk $true
+TxtCenter "(combinational)" 195 118 130 8 $dk_blue
+TxtCenter "type[2:1]=00 → HIGH" 195 132 130 7.5 $dk_gray
+TxtCenter "type[2:1]=01 → MED" 195 143 130 7.5 $dk_gray
+TxtCenter "type[2]=1   → LOW" 195 154 130 7.5 $dk_gray
+
+# Arrows classifier -> 3 FIFOs
+Arrow 325 118 390 200 $dk_blue 1.5   # to HIGH FIFO
+Arrow 325 130 390 360 $dk_blue 1.5   # to MED FIFO
+Arrow 325 142 390 510 $dk_blue 1.5   # to LOW FIFO
+
+# -- HIGH FIFO
+RoundRect 390 175 160 70 10 $bg_blue $dk_blue 2
+TxtCenter "sync_fifo (HIGH)" 390 183 160 9 $blk $true
+TxtCenter "DEPTH=32  WIDTH=20" 390 197 160 8 $dk_blue
+TxtCenter "occupancy[4:0]" 390 210 160 8 $dk_gray
+TxtCenter "full / empty" 390 222 160 8 $dk_gray
+
+# -- MED FIFO
+RoundRect 390 335 160 70 10 $bg_purple $dk_purple 2
+TxtCenter "sync_fifo (MED)" 390 343 160 9 $blk $true
+TxtCenter "DEPTH=16  WIDTH=20" 390 357 160 8 $dk_purple
+TxtCenter "occupancy[3:0]" 390 370 160 8 $dk_gray
+TxtCenter "full / empty" 390 382 160 8 $dk_gray
+
+# -- LOW FIFO
+RoundRect 390 495 160 70 10 $bg_green $dk_green 2
+TxtCenter "sync_fifo (LOW)" 390 503 160 9 $blk $true
+TxtCenter "DEPTH=8   WIDTH=20" 390 517 160 8 $dk_green
+TxtCenter "occupancy[2:0]" 390 530 160 8 $dk_gray
+TxtCenter "full / empty" 390 542 160 8 $dk_gray
+
+# Arrows FIFOs -> WRR scheduler
+Arrow 550 210 620 310 $dk_purple 1.5
+Arrow 550 370 620 350 $dk_purple 1.5
+Arrow 550 530 620 390 $dk_purple 1.5
+
+# -- WRR SCHEDULER
+RoundRect 620 280 170 120 10 $bg_purple $dk_purple 3
+TxtCenter "wrr_scheduler" 620 290 170 10 $blk $true
+TxtCenter "WRR  credits H:M:L = 4:2:1" 620 308 170 7.5 $dk_purple
+TxtCenter "Starvation prevention" 620 320 170 7.5 $dk_purple
+TxtCenter "STARVE_THRESH=256" 620 332 170 7.5 $dk_gray
+TxtCenter "starve_h / starve_m / starve_l" 620 348 170 7 $dk_gray
+TxtCenter "out_priority[1:0]" 620 362 170 7.5 $dk_purple
+TxtCenter "out_valid / out_ready" 620 374 170 7.5 $dk_gray
+
+# Arrow WRR -> output
+Arrow 790 340 855 340 $dk_green 2
+
+# -- OUTPUT
+RoundRect 855 310 100 60 10 $bg_green $dk_green 2
+TxtCenter "Downstream" 855 320 100 9 $blk $true
+TxtCenter "out_valid" 855 333 100 8 $dk_green
+TxtCenter "out_type/size/ls" 855 345 100 8 $dk_green
+TxtCenter "out_priority" 855 357 100 8 $dk_green
+
+# -- CONTROL LOGIC box (below)
+RoundRect 390 600 520 90 10 $bg_orange $dk_orange 2
+TxtCenter "control_logic" 390 608 520 10 $blk $true
+TxtCenter "Congestion monitor (NORMAL/WARNING/CRITICAL/SEVERE)" 390 624 520 8 $dk_orange
+TxtCenter "Admission control: in_ready backpressure   |   Drop alert latch" 390 638 520 8 $dk_gray
+TxtCenter "Rate measurement: rx_pkt_rate / tx_pkt_rate  (per 256 cycles)" 390 652 520 8 $dk_gray
+TxtCenter "high_watermark_h/m/l   |   starvation_alert" 390 666 520 8 $dk_gray
+
+# Arrows: occupancy feeds from FIFOs down to control_logic
+Arrow 470 245 470 600 $dk_orange 1.5
+Arrow 470 405 472 600 $dk_orange 1.5
+Arrow 470 565 474 600 $dk_orange 1.5
+
+# Arrow: starve flags from WRR to control_logic
+Arrow 705 400 705 600 $dk_orange 1.5
+
+# Arrow: in_ready back to upstream
+Arrow 420 600 140 200 $dk_red 1.5
+
+# Packet word label
+Txt "Packet word [19:0]:" 330 80 8 $dk_gray
+Txt "[19:17]=type  [16:1]=size  [0]=latency_sensitive" 330 91 7.5 $dk_gray
+
+# in_ready label
+Txt "in_ready (backpressure)" 145 195 7.5 $dk_red
+
+# Legend
+RoundRect 870 460 200 220 8 @(250,250,255) $dk_gray 1
+Txt "Legend" 885 470 9 $blk $true
+RoundRect 882 490 16 12 3 $bg_blue $dk_blue 1
+Txt "Input / Classification" 904 488 8 $dk_gray
+RoundRect 882 510 16 12 3 $bg_purple $dk_purple 1
+Txt "WRR Scheduler" 904 508 8 $dk_gray
+RoundRect 882 530 16 12 3 $bg_green $dk_green 1
+Txt "Output / Datapath" 904 528 8 $dk_gray
+RoundRect 882 550 16 12 3 $bg_orange $dk_orange 1
+Txt "Control Plane" 904 548 8 $dk_gray
+RoundRect 882 570 16 12 3 $bg_gray $dk_gray 1
+Txt "External Interface" 904 568 8 $dk_gray
+
+# RTL file list
+Txt "RTL Files:" 885 595 8 $blk $true
+$files = @("rtl/packet_classifier.sv","rtl/sync_fifo.sv","rtl/wrr_scheduler.sv","rtl/traffic_switch_top.sv","rtl/control_logic.sv","sim/tb_traffic_switch_top.sv")
+$fy = 610
+foreach($f in $files){
+    Txt "• $f" 888 $fy 7.5 $dk_gray
+    $fy += 12
+}
+
+# Save
+$bmp.Save("docs\block_diagram.png", [System.Drawing.Imaging.ImageFormat]::Png)
+$g.Dispose(); $bmp.Dispose()
+Write-Host "block_diagram.png generated" (2026-04-19T03:59:22.682Z) ===
+Exit Code: 0
+Output:
+block_diagram.png generated
+
+=== End Output ===
+

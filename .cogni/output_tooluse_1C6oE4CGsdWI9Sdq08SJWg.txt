@@ -1,0 +1,24 @@
+=== Command: python --version; python -c "import matplotlib; print('matplotlib', matplotlib.__version__)" 2>&1 (2026-04-19T03:57:38.630Z) ===
+Exit Code: 1
+Output:
+Program 'python.exe' failed to run: The system cannot find the path specifiedAt line:1 char:1
++ python --version; python -c "import matplotlib; print('matplotlib', m ...
++ ~~~~~~~~~~~~~~~~.
+At line:1 char:1
++ python --version; python -c "import matplotlib; print('matplotlib', m ...
++ ~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ResourceUnavailable: (:) [], ApplicationFailedException
+    + FullyQualifiedErrorId : NativeCommandFailed
+ 
+Program 'python.exe' failed to run: The system cannot find the path specifiedAt line:1 char:19
++ ...  --version; python -c "import matplotlib; print('matplotlib', matplot ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~.
+At line:1 char:19
++ ...  --version; python -c "import matplotlib; print('matplotlib', matplot ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ResourceUnavailable: (:) [], ApplicationFailedException
+    + FullyQualifiedErrorId : NativeCommandFailed
+ 
+
+=== End Output ===
+

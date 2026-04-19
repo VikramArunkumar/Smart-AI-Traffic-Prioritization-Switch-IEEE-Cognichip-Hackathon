@@ -24,23 +24,23 @@
 
 ## Project Statement & Project Goal
 
-# The Problem
+### The Problem
 What hardware design challenge are you solving? What gap or limitation does your project address?
 
 Network switches today treat most traffic similarly or rely on static rules. However, modern applications like video calls, gaming, and AI workloads have very different requirements.
 This leads to high latency in real-time applications, packet loss during congestion, and poor overall user experience. A smarter system is needed to dynamically prioritize important traffic.
 
-# Why It Matters
+### Why It Matters
 What would be the real-world impact of solving this problem?
 
 
-# Project Goal
+### Project Goal
 What did you set out to build or demonstrate? State your primary objective clearly.
 In this project, I will design a simplified AI-powered network switch simulator that dynamically prioritizes traffic based on its importance. The system will classify traffic (video, gaming, file transfer), assign priority using a lightweight AI model, and route packets through priority-based queues. 
 The switch will simulate congestion using limited buffers and demonstrate how AI reduces latency and packet loss. The system design overview would be: AI-driven Traffic Classification → Priority Assignment → Multi-Queue Scheduler → Packet Transmission.  This would include a high priority queue (video, real-time), a medium priority queue, and a low priority queue (bulk data). 
 The implementation plan would be a python-based traffic simulator, then a simple ML model (decision tree or rules), then a queue-based scheduling system, and finally a visualization using Matplotlib or Streamlit.  Some stretch goals include reinforcement learning for adaptive scheduling, a real-time dashboard, and a comparison with FIFO scheduling.  
 
-# Success Criteria
+### Success Criteria
 How would you know if your project succeeded? (e.g., timing closure, functional simulation, verified logic)
 
 ## Design Methodology
