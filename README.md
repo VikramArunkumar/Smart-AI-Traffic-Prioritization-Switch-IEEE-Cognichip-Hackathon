@@ -159,7 +159,7 @@ TC6 Reset	✅ PASSED	out_valid=0, all counters cleared, starve flags cleared aft
 
 
 ### Waveform / Output Screenshot
-See [docs/IEEE_Cognichip Hackathon CogniVik Submission.pptx](docs/IEEE_Cognichip%20Hackathon%20CogniVik%20Submission.pptx)
+See [docs/IEEE_Cognichip Hackathon CogniVik Submission.pdf](docs/IEEE_Cognichip%20Hackathon%20CogniVik%20Submission.pptx.pdf)
 
 ### Performance Summary
 Max frequency: ~100–125 MHz (post-synthesis on Artix-7);  Resource utilization: Low (<10% LUTs/FFs, minimal BRAM for FIFOs); Power: Estimated low (<20 mW, FPGA-based); These results show the design is lightweight, meets timing comfortably, and is suitable for real-time, low-latency operation.
