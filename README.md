@@ -209,7 +209,8 @@ Smart-AI-Traffic-Prioritization-Switch-IEEE-Cognichip-Hackathon/
 |   +-  tb_mixed_traffic.sv
 +-  docs/
 |   +-  block_diagram.png        System architecture diagram
-|   +-  design_spec.md           This document
+|   +-  design_spec.md           Design Spec
+|   +-  IEEE_Cognichip Hackathon CogniVik Submission.pptx.pdf
 +-  simulation_results/          Waveform dumps (*.fst)
 +-  DEPS.yml                     Simulation dependency manifest
 +-  README.md
