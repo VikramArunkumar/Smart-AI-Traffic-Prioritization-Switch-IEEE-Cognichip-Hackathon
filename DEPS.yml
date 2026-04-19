@@ -6,3 +6,13 @@ bench_traffic_switch:
     - rtl/traffic_switch_top.sv
     - sim/tb_traffic_switch_top.sv
   top: tb_traffic_switch_top
+
+bench_mixed_traffic:
+  deps:
+    - rtl/sync_fifo.sv
+    - rtl/packet_classifier.sv
+    - rtl/wrr_scheduler.sv
+    - rtl/traffic_switch_top.sv
+    - rtl/control_logic.sv
+    - sim/tb_mixed_traffic.sv
+  top: tb_mixed_traffic
